@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GuiambaDrop — Pedidos e Pagamentos</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f3f5f7;color:#17202a}
+header{background:#111827;color:white;padding:16px;display:flex;justify-content:space-between;align-items:center}
+.logo{font-size:22px;font-weight:bold}.badge{background:#16a34a;padding:7px 11px;border-radius:20px;font-size:12px}
+.container{max-width:1050px;margin:20px auto;padding:0 14px}
+.card{background:white;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 2px 9px #00000012}
+h2{margin-top:0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+input,select,textarea,button{width:100%;padding:12px;border-radius:9px;border:1px solid #d1d5db;font-size:15px}
+button{border:0;background:#111827;color:white;font-weight:bold;cursor:pointer}.green{background:#16a34a}.orange{background:#ea580c}.red{background:#dc2626}.gray{background:#6b7280}
+.product{border:1px solid #e5e7eb;border-radius:12px;padding:10px}.product img{width:100%;height:160px;object-fit:cover;border-radius:9px}
+.price{font-size:19px;font-weight:bold;margin:7px 0}.muted{color:#6b7280;font-size:13px}
+.order{border:1px solid #e5e7eb;border-radius:12px;padding:15px;margin:10px 0}
+.status{display:inline-block;padding:5px 9px;border-radius:15px;background:#fef3c7;font-size:12px;font-weight:bold}
+.paid{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}
+.hidden{display:none}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:15px}.tabs button{width:auto;padding:10px 14px}
+.total{font-size:22px;font-weight:bold}
+.small{font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">🛒 GuiambaDrop</div>
+  <span class="badge" id="headerStatus">Loja</span>
+</header>
+
+<div class="container">
+
+<div class="tabs">
+<button onclick="show('loja')">🛍️ Loja</button>
+<button onclick="show('pedidos')">📦 Pedidos</button>
+<button onclick="show('config')">⚙️ Configuração</button>
+</div>
+
+<section id="loja">
+<div class="card">
+<h2>Produtos</h2>
+<div id="products" class="grid"></div>
+</div>
+</section>
+
+<section id="pedidos" class="hidden">
+<div class="card">
+<h2>📦 Gestão de pedidos</h2>
+<p class="muted">Aqui aparecem os pedidos feitos neste navegador. Use “Confirmar pagamento” somente depois de verificar o recebimento.</p>
+<div id="orders"></div>
+</div>
+</section>
+
+<section id="config" class="hidden">
+<div class="card">
+<h2>⚙️ Configuração</h2>
+<div class="grid">
+<div><label>WhatsApp da loja</label><input id="whatsapp" placeholder="25884xxxxxxx"></div>
+<div><label>M-Pesa</label><input id="mpesa" placeholder="25884xxxxxxx"></div>
+<div><label>e-Mola</label><input id="emola" placeholder="25886xxxxxxx"></div>
+</div>
+<br><button class="green" onclick="saveConfig()">Guardar configuração</button>
+<p id="saveMsg" class="muted"></p>
+</div>
+</section>
+
+</div>
+
+<div id="modal" class="hidden" style="position:fixed;inset:0;background:#0008;padding:20px;overflow:auto">
+<div class="card" style="max-width:550px;margin:40px auto">
+<h2 id="modalTitle">Fazer pedido</h2>
+<div id="selectedProduct"></div>
+<div class="grid">
+<input id="customer" placeholder="Nome do cliente">
+<input id="phone" placeholder="Telefone">
+<input id="qty" type="number" min="1" value="1" placeholder="Quantidade">
+<input id="address" placeholder="Endereço / bairro">
+<select id="method"><option value="">Forma de pagamento</option><option>M-Pesa</option><option>e-Mola</option></select>
+</div>
+<br>
+<textarea id="note" placeholder="Observação (opcional)"></textarea>
+<br><br>
+<div class="total" id="modalTotal">Total: 0 MT</div>
+<br>
+<button class="green" onclick="createOrder()">Criar pedido</button><br><br>
+<button class="gray" onclick="closeModal()">Cancelar</button>
+</div>
+</div>
+
+<script>
+const KEY_PRODUCTS='gd_products_v7';
+const KEY_ORDERS='gd_orders_v7';
+const KEY_CONFIG='gd_config_v7';
+
+let products=JSON.parse(localStorage.getItem(KEY_PRODUCTS)||'[]');
+let orders=JSON.parse(localStorage.getItem(KEY_ORDERS)||'[]');
+let config=JSON.parse(localStorage.getItem(KEY_CONFIG)||'{}');
+let selected=null;
+
+if(!products.length){
+  products=[
+    {id:1,name:'Sapato masculino',category:'Calçado',price:1200,stock:10,description:'Sapato masculino para venda.',photo:''},
+    {id:2,name:'Televisão',category:'Eletrónicos',price:8500,stock:5,description:'Televisão para sua casa.',photo:''}
+  ];
+  localStorage.setItem(KEY_PRODUCTS,JSON.stringify(products));
+}
+
+function money(n){return Number(n||0).toLocaleString('pt-MZ')+' MT'}
+
+function show(sec){
+  ['loja','pedidos','config'].forEach(x=>document.getElementById(x).classList.toggle('hidden',x!==sec));
+  document.getElementById('headerStatus').textContent=sec==='loja'?'Loja':sec==='pedidos'?'Pedidos':'Configuração';
+  if(sec==='pedidos') renderOrders();
+}
+
+function renderProducts(){
+  const box=document.getElementById('products');
+  box.innerHTML='';
+  products.forEach(p=>{
+    box.innerHTML+=`
+    <div class="product">
+      ${p.photo?`<img src="${p.photo}">`:'<div style="height:160px;background:#e5e7eb;border-radius:9px;display:grid;place-items:center">📦 Sem foto</div>'}
+      <h3>${escapeHtml(p.name)}</h3>
+      <div class="muted">${escapeHtml(p.category||'')}</div>
+      <div class="price">${money(p.price)}</div>
+      <div class="muted">Stock: ${p.stock}</div>
+      <p>${escapeHtml(p.description||'')}</p>
+      <button class="green" onclick="openOrder(${p.id})">Quero comprar</button>
+    </div>`;
+  });
+}
+
+function openOrder(id){
+ selected=products.find(p=>p.id==id);
+ document.getElementById('modalTitle').textContent='Comprar: '+selected.name;
+ document.getElementById('selectedProduct').innerHTML='<p><b>Preço:</b> '+money(selected.price)+' | <b>Stock:</b> '+selected.stock+'</p>';
+ document.getElementById('qty').value=1;
+ document.getElementById('modal').classList.remove('hidden');
+ updateTotal();
+}
+function closeModal(){document.getElementById('modal').classList.add('hidden')}
+document.getElementById('qty').addEventListener('input',updateTotal);
+function updateTotal(){
+ if(!selected)return;
+ let q=Math.max(1,Number(document.getElementById('qty').value||1));
+ document.getElementById('modalTotal').textContent='Total: '+money(selected.price*q);
+}
+
+function createOrder(){
+ if(!selected)return;
+ const customer=document.getElementById('customer').value.trim();
+ const phone=document.getElementById('phone').value.trim();
+ const address=document.getElementById('address').value.trim();
+ const method=document.getElementById('method').value;
+ const qty=Math.max(1,Number(document.getElementById('qty').value||1));
+ if(!customer||!phone||!address||!method){alert('Preencha nome, telefone, endereço e forma de pagamento.');return}
+ if(qty>Number(selected.stock)){alert('Quantidade maior que o stock disponível.');return}
+
+ const order={
+  id:'GD'+Date.now(),
+  date:new Date().toLocaleString('pt-MZ'),
+  productId:selected.id,
+  product:selected.name,
+  price:Number(selected.price),
+  quantity:qty,
+  total:Number(selected.price)*qty,
+  customer,phone,address,method,
+  note:document.getElementById('note').value.trim(),
+  status:'Pendente'
+ };
+ orders.unshift(order);
+ localStorage.setItem(KEY_ORDERS,JSON.stringify(orders));
+ selected.stock=Number(selected.stock)-qty;
+ localStorage.setItem(KEY_PRODUCTS,JSON.stringify(products));
+
+ const pay=method==='M-Pesa'?config.mpesa:config.emola;
+ const wa=config.whatsapp;
+ const text=`NOVO PEDIDO GuiambaDrop%0A%0APedido: ${order.id}%0AProduto: ${encodeURIComponent(order.product)}%0AQuantidade: ${qty}%0ATotal: ${encodeURIComponent(money(order.total))}%0ACliente: ${encodeURIComponent(customer)}%0ATelefone: ${encodeURIComponent(phone)}%0AEndereço: ${encodeURIComponent(address)}%0APagamento: ${encodeURIComponent(method)}%0ANúmero para pagamento: ${encodeURIComponent(pay||'Não configurado')}%0AObservação: ${encodeURIComponent(order.note||'-')}`;
+ closeModal();
+ renderProducts(); renderOrders();
+ if(wa && wa.replace(/\D/g,'').length>=10){
+   window.open('https://wa.me/'+wa.replace(/\D/g,'')+'?text='+text,'_blank');
+ } else {
+   alert('Pedido criado. Configure o WhatsApp em Configuração para enviar automaticamente.');
+ }
+ show('pedidos');
+}
+
+function renderOrders(){
+ const box=document.getElementById('orders');
+ if(!orders.length){box.innerHTML='<p class="muted">Ainda não existem pedidos.</p>';return}
+ box.innerHTML=orders.map(o=>`
+ <div class="order">
+  <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+   <b>${o.id}</b>
+   <span class="status ${o.status==='Pago'?'paid':'pending'}">${o.status}</span>
+  </div>
+  <p><b>${escapeHtml(o.product)}</b> × ${o.quantity}</p>
+  <p class="total">${money(o.total)}</p>
+  <p>👤 ${escapeHtml(o.customer)}<br>📞 ${escapeHtml(o.phone)}<br>📍 ${escapeHtml(o.address)}<br>💳 ${escapeHtml(o.method)}</p>
+  <p class="muted">${escapeHtml(o.date)}</p>
+  ${o.note?'<p>📝 '+escapeHtml(o.note)+'</p>':''}
+  ${o.status!=='Pago'?`<button class="green" onclick="confirmPayment('${o.id}')">✅ Confirmar pagamento</button>`:`<button class="gray" disabled>Pagamento confirmado</button>`}
+  <br><br>
+  <button class="orange" onclick="sendOrderAgain('${o.id}')">📲 Enviar no WhatsApp</button>
+ </div>`).join('');
+}
+
+function confirmPayment(id){
+ const o=orders.find(x=>x.id===id);
+ if(!o)return;
+ if(confirm('Confirma que recebeu '+money(o.total)+' deste pedido?')){
+   o.status='Pago';
+   o.paidAt=new Date().toLocaleString('pt-MZ');
+   localStorage.setItem(KEY_ORDERS,JSON.stringify(orders));
+   renderOrders();
+   alert('Pagamento confirmado. O pedido agora está como PAGO.');
+ }
+}
+
+function sendOrderAgain(id){
+ const o=orders.find(x=>x.id===id); if(!o)return;
+ const wa=config.whatsapp;
+ if(!wa){alert('Configure o WhatsApp primeiro.');return}
+ const text=`PEDIDO GuiambaDrop%0A${o.id}%0AProduto: ${encodeURIComponent(o.product)}%0AQuantidade: ${o.quantity}%0ATotal: ${encodeURIComponent(money(o.total))}%0ACliente: ${encodeURIComponent(o.customer)}%0ATelefone: ${encodeURIComponent(o.phone)}%0AEndereço: ${encodeURIComponent(o.address)}%0APagamento: ${encodeURIComponent(o.method)}%0AEstado: ${encodeURIComponent(o.status)}`;
+ window.open('https://wa.me/'+wa.replace(/\D/g,'')+'?text='+text,'_blank');
+}
+
+function saveConfig(){
+ config={
+  whatsapp:document.getElementById('whatsapp').value.trim(),
+  mpesa:document.getElementById('mpesa').value.trim(),
+  emola:document.getElementById('emola').value.trim()
+ };
+ localStorage.setItem(KEY_CONFIG,JSON.stringify(config));
+ document.getElementById('saveMsg').textContent='Configuração guardada.';
+}
+
+function loadConfig(){
+ document.getElementById('whatsapp').value=config.whatsapp||'';
+ document.getElementById('mpesa').value=config.mpesa||'';
+ document.getElementById('emola').value=config.emola||'';
+}
+
+function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+
+renderProducts();renderOrders();loadConfig();
+</script>
+</body>
+</html>
